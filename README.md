@@ -14,3 +14,7 @@ A web-based interface for simulating conversations between multiple LLM-powered 
 pip install -r requirements.txt
 python app.py
 ```
+
+##User Interface
+
+![resim](https://github.com/user-attachments/assets/b249fa09-829a-41b4-8a2a-17c377678fc9)

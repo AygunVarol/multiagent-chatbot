@@ -1,29 +1,75 @@
 import gradio as gr
-from agents import agents
-from conversation import generate
+from agents import agents, add_or_update_agent, list_agents, delete_agent
+from conversation import generate_stream
+import time
+import os
+
+conversation_log = []
+stop_flag = False
 
 def run_conversation(topic, rounds):
-    if len(agents) < 2:
-        return "Please add at least two agents."
-
-    names = list(agents.keys())
-    a1, a2 = agents[names[0]], agents[names[1]]
-    history = f"Topic: {topic}\n"
-    last_msg = "Hello, I received a message about my energy bill. Can you help?"
+    global conversation_log, stop_flag
+    stop_flag = False
     conversation_log = []
 
-    for _ in range(rounds):
-        reply1 = generate(a1, history, last_msg)
-        conversation_log.append(f"{a1['name']}: {reply1}")
-        history += f"\n{a1['name']}: {reply1}"
+    if len(agents) < 2:
+        return [["system", "Please add at least two agents."]], ""
 
-        reply2 = generate(a2, history, reply1)
-        conversation_log.append(f"{a2['name']}: {reply2}")
-        history += f"\n{a2['name']}: {reply2}"
+    names = list(agents.keys())
+    agent_cycle = [agents[name] for name in names]
+    history = f"Topic: {topic}\n"
+    last_msg = "Hi! What are your thoughts on this topic?"
 
-        last_msg = reply2
+    chat_display = [[agent_cycle[0]["name"], last_msg]]
+    conversation_log.append(f"{agent_cycle[0]['name']}: {last_msg}")
+    history += f"{agent_cycle[0]['name']}: {last_msg}"
 
-    return "\n".join(conversation_log)
+    yield chat_display + [["system", "Conversation started"]], ""
+
+    for round_num in range(rounds):
+        if stop_flag:
+            break
+        for agent in agent_cycle:
+            if stop_flag:
+                break
+            live_reply = ""
+            for token in generate_stream(agent, history, last_msg):
+                live_reply += token
+                yield chat_display + [[agent["name"], live_reply]], ""
+            chat_display.append([agent["name"], live_reply])
+            conversation_log.append(f"{agent['name']}: {live_reply}")
+            history += f"\n{agent['name']}: {live_reply}"
+            last_msg = live_reply
+
+    yield chat_display + [["system", "Conversation ended"]], ""
+
+def stop_conversation():
+    global stop_flag
+    stop_flag = True
+    return "Conversation stopped."
+
+def download_conversation():
+    filename = f"conversation_{int(time.time())}.txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("\n".join(conversation_log))
+    return filename
+
+def export_conversation_pretty():
+    filename = f"chat_export_{int(time.time())}.txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("Formatted Conversation\n=====================\n")
+        for line in conversation_log:
+            name, msg = line.split(": ", 1)
+            f.write(f"[{name}] >> {msg}\n")
+    return filename
+
+def update_agent_ui(name, prompt, model):
+    add_or_update_agent(name, prompt, model)
+    return "\n".join(list_agents())
+
+def delete_agent_ui(name):
+    delete_agent(name)
+    return "\n".join(list_agents())
 
 with gr.Blocks(css="body { background-color: black; color: white; }") as demo:
     with gr.Row():
@@ -31,32 +77,36 @@ with gr.Blocks(css="body { background-color: black; color: white; }") as demo:
             gr.Markdown("### Agent Setup")
             agent_name = gr.Textbox(label="Agent Name")
             agent_prompt = gr.Textbox(label="Agent Prompt", lines=5)
-            model_name = gr.Textbox(label="Model Name (e.g., TheBloke/Llama-3-OpenOrca-1B-GGUF)")
+            model_name = gr.Textbox(label="Model Name (e.g., meta-llama/Llama-3.2-1B-Instruct)")
             add_btn = gr.Button("Update Agent")
             agent_list = gr.Markdown("Agents:")
 
-            def update_agents(name, prompt, model):
-                from agents import add_or_update_agent, list_agents
-                add_or_update_agent(name, prompt, model)
-                return "\n".join(list_agents())
-
-            add_btn.click(update_agents, inputs=[agent_name, agent_prompt, model_name], outputs=agent_list)
+            add_btn.click(update_agent_ui,
+                          inputs=[agent_name, agent_prompt, model_name],
+                          outputs=agent_list)
 
             delete_name = gr.Textbox(label="Delete Agent Name")
             del_btn = gr.Button("Delete Agent")
-            def delete_and_list(name):
-                from agents import delete_agent, list_agents
-                delete_agent(name)
-                return "\n".join(list_agents())
-            del_btn.click(delete_and_list, inputs=delete_name, outputs=agent_list)
+            del_btn.click(delete_agent_ui,
+                          inputs=delete_name,
+                          outputs=agent_list)
 
         with gr.Column(scale=2):
             gr.Markdown("### MultiAgent Chatbot")
             topic = gr.Textbox(label="Topic")
             rounds = gr.Slider(minimum=1, maximum=20, step=1, value=10, label="Rounds")
             start_btn = gr.Button("Start Conversation")
-            output = gr.Textbox(label="Conversation Output", lines=25)
-            start_btn.click(fn=run_conversation, inputs=[topic, rounds], outputs=output)
+            stop_btn = gr.Button("Stop Conversation")
+            download_btn = gr.Button("Download Raw Log")
+            export_btn = gr.Button("Export Pretty Chat")
+
+            chatbot = gr.Chatbot(label="Conversation", height=500, avatar_images=["🧑", "🤖", "💡", "🧠"])
+            output_status = gr.Textbox(label="Status Message", lines=1)
+
+            start_btn.click(fn=run_conversation, inputs=[topic, rounds], outputs=[chatbot, output_status])
+            stop_btn.click(fn=stop_conversation, outputs=output_status)
+            download_btn.click(fn=download_conversation, outputs=gr.File())
+            export_btn.click(fn=export_conversation_pretty, outputs=gr.File())
 
 if __name__ == "__main__":
     demo.launch()

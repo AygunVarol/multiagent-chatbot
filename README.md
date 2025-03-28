@@ -13,3 +13,4 @@ A web-based interface for simulating conversations between multiple LLM-powered 
 ```bash
 pip install -r requirements.txt
 python app.py
+```
